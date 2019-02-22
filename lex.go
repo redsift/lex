@@ -5,8 +5,8 @@ import (
 	"unicode/utf8"
 )
 
-// TokenType identifies the type of lex items.
-// One can extend known tokens by starting from iota + NoopToken
+// TokenType identifies the type of lex tokens.
+// One can extend known tokens by starting from iota + FirstCustomToken
 type TokenType int
 
 const (
@@ -15,8 +15,8 @@ const (
 	TokEOF
 	// TokError used to define error tokens; value of the token should be text of error
 	TokError
-	// NoopToken should only be used as base value for iota
-	NoopToken
+	// FirstCustomToken should only be used as base value for iota
+	FirstCustomToken
 )
 
 const (
@@ -35,8 +35,8 @@ type Token struct {
 
 func (i Token) String() string {
 	switch i.Typ {
-	case NoopToken:
-		panic("NoopToken is not valid token type; should be used as base value for iota")
+	case FirstCustomToken:
+		panic("FirstCustomToken is not valid token type; should be used as base value for iota")
 	case TokEOF:
 		return "EOF"
 	case TokError:
@@ -54,19 +54,18 @@ type StateFn func(*Lexer) StateFn
 
 // Lexer holds the state of the scanner.
 type Lexer struct {
-	name  string     // used only for error reports
-	input string     // the string being scanned
-	start Pos        // start position of this Token
-	pos   Pos        // current position in the input
-	width Pos        // width of last rune read from input
-	items chan Token // channel of scanned items
+	input  string     // the string being scanned
+	start  Pos        // start position of this Token
+	pos    Pos        // current position in the input
+	width  Pos        // width of last rune read from input
+	tokens chan Token // channel of scanned tokens
 }
 
-// New creates a new *Lexer that will scan given input starting from state
-func New(input string, state StateFn) *Lexer {
+// LexString creates a new *Lexer that will scan given input starting from the state
+func LexString(input string, state StateFn) *Lexer {
 	l := &Lexer{
-		input: input,
-		items: make(chan Token),
+		input:  input,
+		tokens: make(chan Token),
 	}
 	go l.run(state)
 	return l
@@ -78,7 +77,7 @@ func (l *Lexer) run(start StateFn) {
 	for state := start; state != nil; {
 		state = state(l)
 	}
-	close(l.items) // No more tokens will be delivered
+	close(l.tokens) // No more tokens will be delivered
 }
 
 // Next returns the next rune in the input
@@ -107,7 +106,7 @@ func (l *Lexer) Backup() {
 
 // Emit passes an Token back to the client
 func (l *Lexer) Emit(t TokenType) {
-	l.items <- Token{t, l.start, l.input[l.start:l.pos]}
+	l.tokens <- Token{t, l.start, l.input[l.start:l.pos]}
 	l.start = l.pos
 }
 
@@ -119,14 +118,14 @@ func (l *Lexer) Ignore() {
 // Errorf emits an error token and terminates the scan by passing
 // back a nil pointer that will be the next state, terminating l.NextToken
 func (l *Lexer) Errorf(format string, args ...interface{}) StateFn {
-	l.items <- Token{TokError, l.start, fmt.Sprintf(format, args...)}
+	l.tokens <- Token{TokError, l.start, fmt.Sprintf(format, args...)}
 	return nil
 }
 
 // NextToken returns the next token from the input.
 // Called by the parser, not in the lexing goroutine
 func (l *Lexer) NextToken() Token {
-	return <-l.items
+	return <-l.tokens
 }
 
 // IgnoreRunes ignore all runes for which skip return true
@@ -183,7 +182,7 @@ func (l *Lexer) AcceptUntil(set ...rune) bool {
 // Drain drains the output so the lexing goroutine will exit.
 // Called by the parser, not in the lexing goroutine
 func (l *Lexer) Drain() {
-	for range l.items {
+	for range l.tokens {
 	}
 }
 
